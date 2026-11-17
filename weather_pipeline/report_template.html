@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Indiana Weather Pipeline Report</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --ink:#1d2430; --muted:#5f6b7a; --line:#e3e7ec; --a:#2f6fdb; --b:#e07a2f; --c:#2a9d8f; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; background:var(--bg); color:var(--ink); }
+  header { padding:28px 20px 8px; max-width:1100px; margin:auto; }
+  h1 { margin:0 0 6px; font-size:1.6rem; }
+  .meta { color:var(--muted); font-size:.9rem; }
+  .headline { margin:16px 0 0; padding:14px 16px; background:#eaf1fd; border-left:4px solid var(--a); border-radius:6px; font-size:1.05rem; }
+  main { max-width:1100px; margin:auto; padding:12px 20px 40px; display:grid; gap:18px; grid-template-columns:repeat(auto-fit, minmax(320px,1fr)); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; }
+  .wide { grid-column:1 / -1; }
+  h2 { font-size:1rem; margin:0 0 12px; }
+  .tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; }
+  .tile .v { font-size:1.5rem; font-weight:600; } .tile .k { color:var(--muted); font-size:.82rem; }
+  .table-wrap { overflow-x:auto; }
+  table { border-collapse:collapse; width:100%; font-size:.9rem; }
+  th, td { padding:8px 10px; border-bottom:1px solid var(--line); text-align:right; white-space:nowrap; }
+  th:first-child, td:first-child { text-align:left; }
+  th { color:var(--muted); font-weight:600; }
+  footer { max-width:1100px; margin:auto; padding:0 20px 30px; color:var(--muted); font-size:.8rem; }
+  code { font-size:.8rem; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Indiana Weather &mdash; Agentic Pipeline Report</h1>
+  <div class="meta" id="meta"></div>
+  <p class="headline">__HEADLINE__</p>
+</header>
+<main>
+  <section class="card wide"><div class="tiles" id="tiles"></div></section>
+  <section class="card"><h2>Average high vs. low by city (&deg;F)</h2><canvas id="tempChart"></canvas></section>
+  <section class="card"><h2>Total precipitation by city (in)</h2><canvas id="precipChart"></canvas></section>
+  <section class="card wide"><h2>Daily high temperature trend (&deg;F)</h2><canvas id="trendChart" height="110"></canvas></section>
+  <section class="card wide"><h2>City summary</h2><div class="table-wrap"><table id="tbl"></table></div></section>
+</main>
+<footer>
+  Source: Open-Meteo API &middot; Orchestrated with Google ADK &middot; Stored at: <span id="storage"></span>
+</footer>
+<script>
+const DATA = __DATA__;
+const STORAGE = __STORAGE__;
+const S = DATA.city_summary;
+const cities = S.map(r => r.city);
+
+document.getElementById("meta").textContent =
+  `Run ${DATA.run_id} · last ${DATA.past_days} days · ${DATA.rows_kept} daily rows kept, ${DATA.rows_dropped} dropped`;
+document.getElementById("storage").innerHTML = STORAGE.map(u => `<code>${u}</code>`).join(", ") || "n/a";
+
+const warm = S[0], cool = S[S.length - 1];
+const wet = [...S].sort((a, b) => b.total_precip_in - a.total_precip_in)[0];
+const tiles = [
+  ["Warmest city", `${warm.city}`, `${warm.avg_high_f}°F avg high`],
+  ["Coolest city", `${cool.city}`, `${cool.avg_high_f}°F avg high`],
+  ["Wettest city", `${wet.city}`, `${wet.total_precip_in} in total`],
+  ["Cities tracked", S.length, `${DATA.past_days}-day window`],
+];
+document.getElementById("tiles").innerHTML = tiles.map(
+  ([k, v, s]) => `<div class="tile"><div class="k">${k}</div><div class="v">${v}</div><div class="k">${s}</div></div>`
+).join("");
+
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+new Chart(document.getElementById("tempChart"), {
+  type: "bar",
+  data: { labels: cities, datasets: [
+    { label: "Avg high", data: S.map(r => r.avg_high_f), backgroundColor: css("--b") },
+    { label: "Avg low", data: S.map(r => r.avg_low_f), backgroundColor: css("--a") } ] },
+  options: { responsive: true }
+});
+new Chart(document.getElementById("precipChart"), {
+  type: "bar",
+  data: { labels: cities, datasets: [{ label: "Total precip (in)", data: S.map(r => r.total_precip_in), backgroundColor: css("--c") }] },
+  options: { indexAxis: "y", responsive: true, plugins: { legend: { display: false } } }
+});
+const dates = [...new Set(DATA.daily.map(r => r.date))].sort();
+const palette = ["#2f6fdb", "#e07a2f", "#2a9d8f", "#9b5de5", "#d62828", "#6c757d", "#f4a261", "#264653"];
+new Chart(document.getElementById("trendChart"), {
+  type: "line",
+  data: { labels: dates, datasets: cities.map((c, i) => ({
+    label: c, borderColor: palette[i % palette.length], backgroundColor: palette[i % palette.length],
+    tension: .25, pointRadius: 2,
+    data: dates.map(d => (DATA.daily.find(r => r.city === c && r.date === d) || {}).high_f ?? null) })) },
+  options: { responsive: true, interaction: { mode: "index", intersect: false } }
+});
+
+const cols = [["warmth_rank","Rank"],["city","City"],["days","Days"],["avg_high_f","Avg high"],["avg_low_f","Avg low"],
+  ["max_high_f","Max high"],["min_low_f","Min low"],["avg_range_f","Avg range"],["total_precip_in","Precip (in)"],
+  ["wet_days","Wet days"],["max_wind_mph","Max wind (mph)"]];
+const tbl = document.getElementById("tbl");
+tbl.innerHTML = `<thead><tr>${cols.map(c => `<th>${c[1]}</th>`).join("")}</tr></thead><tbody>` +
+  S.map(r => `<tr>${cols.map(([k]) => `<td>${r[k]}</td>`).join("")}</tr>`).join("") + "</tbody>";
+// move City to first column visually
+[...tbl.rows].forEach(row => row.insertBefore(row.cells[1], row.cells[0]));
+</script>
+</body>
+</html>
